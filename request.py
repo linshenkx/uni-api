@@ -8,7 +8,7 @@ from PIL import Image
 import io
 
 from models import RequestModel
-from utils import c35s, c3s, c3o, c3h, gemini1, gemini2, BaseAPI, get_model_dict, provider_api_circular_list, safe_get
+from utils import c35s, c3s, c3o, c3h, gemini1, gemini2, BaseAPI, get_model_dict, provider_api_circular_list, safe_get, ThreadSafeCircularList
 
 import imghdr
 
@@ -376,11 +376,14 @@ async def get_vertex_gemini_payload(request, engine, provider):
     gemini_stream = "streamGenerateContent"
     model_dict = get_model_dict(provider)
     model = model_dict[request.model]
+    search_tool = None
 
     if "gemini-2.0" in model or "gemini-exp" in model:
         location = gemini2
+        search_tool = {"googleSearch": {}}
     else:
         location = gemini1
+        search_tool = {"googleSearchRetrieval": {}}
 
     url = "https://{LOCATION}-aiplatform.googleapis.com/v1/projects/{PROJECT_ID}/locations/{LOCATION}/publishers/google/models/{MODEL_ID}:{stream}".format(LOCATION=await location.next(), PROJECT_ID=project_id, MODEL_ID=model, stream=gemini_stream)
 
@@ -488,7 +491,6 @@ async def get_vertex_gemini_payload(request, engine, provider):
         'logprobs',
         'top_logprobs'
     ]
-
     for field, value in request.model_dump(exclude_unset=True).items():
         if field not in miss_fields and value is not None:
             if field == "tools":
@@ -507,13 +509,9 @@ async def get_vertex_gemini_payload(request, engine, provider):
 
     if request.model.endswith("-search"):
         if "tools" not in payload:
-            payload["tools"] = [{
-                "googleSearch": {}
-            }]
+            payload["tools"] = [search_tool]
         else:
-            payload["tools"].append({
-                "googleSearch": {}
-            })
+            payload["tools"].append(search_tool)
 
     return url, headers, payload
 
