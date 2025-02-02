@@ -287,18 +287,20 @@ async def get_gemini_payload(request, engine, provider):
                                 prop_value["description"] = f"{description}\nDefault: {default_value}"
                                 # 删除 default 字段
                                 del prop_value["default"]
-                    processed_tools.append({"function": function_def})
+                    if function_def["name"] != "googleSearch" and function_def["name"] != "googleSearch":
+                        processed_tools.append({"function": function_def})
 
-                payload.update({
-                    "tools": [{
-                        "function_declarations": [tool["function"] for tool in processed_tools]
-                    }],
-                    "tool_config": {
-                        "function_calling_config": {
-                            "mode": "AUTO"
+                if processed_tools:
+                    payload.update({
+                        "tools": [{
+                            "function_declarations": [tool["function"] for tool in processed_tools]
+                        }],
+                        "tool_config": {
+                            "function_calling_config": {
+                                "mode": "AUTO"
+                            }
                         }
-                    }
-                })
+                    })
             elif field == "temperature":
                 generation_config["temperature"] = value
             elif field == "max_tokens":
@@ -767,6 +769,14 @@ async def get_gpt_payload(request, engine, provider):
         # request.stream = False
         payload.pop("stream_options", None)
 
+    if "o3-mini" in model:
+        if request.model.endswith("high"):
+            payload["reasoning_effort"] = "high"
+        elif request.model.endswith("low"):
+            payload["reasoning_effort"] = "low"
+        else:
+            payload["reasoning_effort"] = "medium"
+
     if request.model.endswith("-search") and "gemini" in request.model:
         if "tools" not in payload:
             payload["tools"] = [{
@@ -884,6 +894,9 @@ async def get_openrouter_payload(request, engine, provider):
     model = model_dict[request.model]
     if provider.get("api"):
         headers['Authorization'] = f"Bearer {await provider_api_circular_list[provider['provider']].next(model)}"
+
+    elif provider['provider'].startswith("sk-"):
+        headers['Authorization'] = f"Bearer {provider['provider']}"
 
     url = provider['base_url']
 
