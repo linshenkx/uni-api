@@ -691,6 +691,8 @@ def safe_get(data, *keys, default=None):
             data = data[key] if isinstance(data, (dict, list)) else data.get(key)
         except (KeyError, IndexError, AttributeError, TypeError):
             return default
+    if not data:
+        return default
     return data
 
 
@@ -796,6 +798,7 @@ def get_engine(provider, endpoint=None, original_model=""):
     else:
         engine = "gpt"
 
+    original_model = original_model.lower()
     if original_model \
     and "claude" not in original_model \
     and "gpt" not in original_model \
