@@ -718,6 +718,8 @@ async def get_gpt_payload(request, engine, provider):
                     content.append(image_message)
         else:
             content = msg.content
+            if msg.role == "system" and "o3-mini" in model and not content.startswith("Formatting re-enabled"):
+                content = "Formatting re-enabled. " + content
             tool_calls = msg.tool_calls
             tool_call_id = msg.tool_call_id
 
@@ -764,7 +766,7 @@ async def get_gpt_payload(request, engine, provider):
     if provider.get("tools") == False or "o1" in model or "chatgpt-4o-latest" in model or "grok" in model:
         payload.pop("tools", None)
         payload.pop("tool_choice", None)
-    if "o1" in model and "models.inference.ai.azure.com" in url:
+    if "models.inference.ai.azure.com" in url:
         payload["stream"] = False
         # request.stream = False
         payload.pop("stream_options", None)
