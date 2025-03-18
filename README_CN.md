@@ -190,6 +190,7 @@ preferences: # 全局配置
     o1-mini: 30 # 模型 o1-mini 的超时时间为 30 秒，当请求名字是 o1-mini 开头的模型时，超时时间是 30 秒
     o1-preview: 100 # 模型 o1-preview 的超时时间为 100 秒，当请求名字是 o1-preview 开头的模型时，超时时间是 100 秒
   cooldown_period: 300 # 渠道冷却时间，单位为秒，默认 300 秒，选填。当模型请求失败时，会自动将该渠道排除冷却一段时间，不再请求该渠道，冷却时间结束后，会自动将该模型恢复，直到再次请求失败，会重新冷却。当 cooldown_period 设置为 0 时，不启用冷却机制。
+  rate_limit: 999999/min # uni-api 全局速率限制，单位为次数/分钟，支持多个频率约束条件，例如：15/min,10/day。默认 999999/min，选填。
   error_triggers: # 错误触发器，当模型返回的消息包含错误触发器中的任意一个字符串时，该渠道会自动返回报错。选填
     - The bot's usage is covered by the developer
     - process this request due to overload or policy
@@ -387,6 +388,7 @@ pex -r requirements.txt \
 我们感谢以下赞助商的支持：
 <!-- ¥2050 -->
 - @PowerHunter：¥2000
+- @IM4O4: ¥100
 - @ioi：¥50
 
 ## 如何赞助我们
@@ -476,6 +478,27 @@ api_key_rate_limit:
 此时如果有一个使用模型 gemini-1.5-pro-002 的请求。
 
 首先，uni-api 会尝试精确匹配 api_key_rate_limit 的模型。如果刚好设置了 gemini-1.5-pro-002 的频率限制，则 gemini-1.5-pro-002 的频率限制则为 500/min，如果此时请求的模型不是 gemini-1.5-pro-002，而是 gemini-1.5-pro-latest，由于 api_key_rate_limit 没有设置 gemini-1.5-pro-latest 的频率限制，因此会寻找有没有前缀和 gemini-1.5-pro-latest 相同的模型被设置了，因此 gemini-1.5-pro-latest 的频率限制会被设置为 1000/min。
+
+- 我想设置渠道1和渠道2为随机轮训，uni-api 在渠道1和渠道2请求失败后才自动重试渠道3，怎么设置？
+
+uni-api 支持将 api key 本身作为渠道，可以通过这一特性对渠道进行分组管理。
+
+```yaml
+api_keys:
+  - api: sk-xxx1
+    model:
+      - sk-xxx2/* # 渠道 1 2 采用随机轮训，失败后请求渠道3
+      - aws/* # 渠道3
+    preferences:
+      SCHEDULING_ALGORITHM: fixed_priority # 表示始终优先请求 api key：sk-xxx2 里面的渠道 1 2，失败后自动请求渠道 3
+
+  - api: sk-xxx2
+    model:
+      - anthropic/claude-3-7-sonnet # 渠道1
+      - openrouter/claude-3-7-sonnet # 渠道2
+    preferences:
+      SCHEDULING_ALGORITHM: random # 渠道 1 2 采用随机轮训
+```
 
 ## ⭐ Star 历史
 

@@ -15,20 +15,25 @@ from starlette.responses import StreamingResponse as StarletteStreamingResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.exceptions import RequestValidationError
 
-from models import RequestModel, ImageGenerationRequest, AudioTranscriptionRequest, ModerationRequest, TextToSpeechRequest, UnifiedRequest, EmbeddingRequest
-from request import get_payload
+from core.models import RequestModel, ImageGenerationRequest, AudioTranscriptionRequest, ModerationRequest, TextToSpeechRequest, UnifiedRequest, EmbeddingRequest
+from core.request import get_payload
 from response import fetch_response, fetch_response_stream
 from utils import (
     safe_get,
     get_proxy,
-    get_engine,
     load_config,
     get_model_dict,
     post_all_models,
-    circular_list_encoder,
+    InMemoryRateLimiter,
     error_handling_wrapper,
-    provider_api_circular_list,
+)
+
+from core.utils import (
+    get_engine,
+    parse_rate_limit,
+    circular_list_encoder,
     ThreadSafeCircularList,
+    provider_api_circular_list,
 )
 
 from collections import defaultdict
@@ -678,6 +683,12 @@ class ClientManager:
             await client.aclose()
         self.clients.clear()
 
+rate_limiter = InMemoryRateLimiter()
+
+async def rate_limit_dependency():
+    if await rate_limiter.is_rate_limited("global", app.state.global_rate_limit):
+        raise HTTPException(status_code=429, detail="Too many requests")
+
 @app.middleware("http")
 async def ensure_config(request: Request, call_next):
 
@@ -693,6 +704,7 @@ async def ensure_config(request: Request, call_next):
                     safe_get(app.state.config, 'api_keys', api_index, "preferences", "rate_limit", default={"default": "999999/min"}),
                     "round_robin"
                 )
+        app.state.global_rate_limit = parse_rate_limit(safe_get(app.state.config, "preferences", "rate_limit", default="999999/min"))
 
         for item in app.state.api_keys_db:
             if item.get("role") == "admin":
@@ -825,6 +837,12 @@ def get_timeout_value(provider_timeouts, original_model):
 async def process_request(request: Union[RequestModel, ImageGenerationRequest, AudioTranscriptionRequest, ModerationRequest, EmbeddingRequest], provider: Dict, endpoint=None, role=None, num_matching_providers=1):
     model_dict = get_model_dict(provider)
     original_model = model_dict[request.model]
+    if provider['provider'].startswith("sk-"):
+        api_key = provider['provider']
+    elif provider.get("api"):
+        api_key = await provider_api_circular_list[provider['provider']].next(original_model)
+    else:
+        api_key = None
 
     engine, stream_mode = get_engine(provider, endpoint, original_model)
 
@@ -835,7 +853,7 @@ async def process_request(request: Union[RequestModel, ImageGenerationRequest, A
     if engine != "moderation":
         logger.info(f"provider: {channel_id:<11} model: {request.model:<22} engine: {engine} role: {role}")
 
-    url, headers, payload = await get_payload(request, engine, provider)
+    url, headers, payload = await get_payload(request, engine, provider, api_key)
     headers.update(safe_get(provider, "preferences", "headers", default={}))  # add custom headers
     if is_debug:
         logger.info(url)
@@ -1247,15 +1265,15 @@ def verify_admin_api_key(credentials: HTTPAuthorizationCredentials = Depends(sec
         raise HTTPException(status_code=403, detail="Permission denied")
     return token
 
-@app.post("/v1/chat/completions")
+@app.post("/v1/chat/completions", dependencies=[Depends(rate_limit_dependency)])
 async def request_model(request: RequestModel, api_index: int = Depends(verify_api_key)):
     return await model_handler.request_model(request, api_index)
 
-@app.options("/v1/chat/completions")
+@app.options("/v1/chat/completions", dependencies=[Depends(rate_limit_dependency)])
 async def options_handler():
     return JSONResponse(status_code=200, content={"detail": "OPTIONS allowed"})
 
-@app.get("/v1/models")
+@app.get("/v1/models", dependencies=[Depends(rate_limit_dependency)])
 async def list_models(api_index: int = Depends(verify_api_key)):
     models = post_all_models(api_index, app.state.config, app.state.api_list, app.state.models_list)
     return JSONResponse(content={
@@ -1263,28 +1281,28 @@ async def list_models(api_index: int = Depends(verify_api_key)):
         "data": models
     })
 
-@app.post("/v1/images/generations")
+@app.post("/v1/images/generations", dependencies=[Depends(rate_limit_dependency)])
 async def images_generations(
     request: ImageGenerationRequest,
     api_index: int = Depends(verify_api_key)
 ):
     return await model_handler.request_model(request, api_index, endpoint="/v1/images/generations")
 
-@app.post("/v1/embeddings")
+@app.post("/v1/embeddings", dependencies=[Depends(rate_limit_dependency)])
 async def embeddings(
     request: EmbeddingRequest,
     api_index: int = Depends(verify_api_key)
 ):
     return await model_handler.request_model(request, api_index, endpoint="/v1/embeddings")
 
-@app.post("/v1/audio/speech")
+@app.post("/v1/audio/speech", dependencies=[Depends(rate_limit_dependency)])
 async def audio_speech(
     request: TextToSpeechRequest,
     api_index: str = Depends(verify_api_key)
 ):
     return await model_handler.request_model(request, api_index, endpoint="/v1/audio/speech")
 
-@app.post("/v1/moderations")
+@app.post("/v1/moderations", dependencies=[Depends(rate_limit_dependency)])
 async def moderations(
     request: ModerationRequest,
     api_index: int = Depends(verify_api_key)
@@ -1293,7 +1311,7 @@ async def moderations(
 
 from fastapi import UploadFile, File, Form, HTTPException
 import io
-@app.post("/v1/audio/transcriptions")
+@app.post("/v1/audio/transcriptions", dependencies=[Depends(rate_limit_dependency)])
 async def audio_transcriptions(
     file: UploadFile = File(...),
     model: str = Form(...),
@@ -1319,7 +1337,7 @@ async def audio_transcriptions(
             traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Error processing audio file: {str(e)}")
 
-@app.get("/v1/generate-api-key")
+@app.get("/v1/generate-api-key", dependencies=[Depends(rate_limit_dependency)])
 def generate_api_key():
     # Define the character set (only alphanumeric)
     chars = string.ascii_letters + string.digits
@@ -1333,7 +1351,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, desc, case
 from fastapi import Query
 
-@app.get("/v1/stats")
+@app.get("/v1/stats", dependencies=[Depends(rate_limit_dependency)])
 async def get_stats(
     request: Request,
     token: str = Depends(verify_admin_api_key),
@@ -1454,7 +1472,7 @@ async def get_stats(
 
     return JSONResponse(content=stats)
 
-@app.get("/")
+@app.get("/", dependencies=[Depends(rate_limit_dependency)])
 async def root():
     return RedirectResponse(url="https://uni-api-web.pages.dev", status_code=302)
 
@@ -1462,11 +1480,11 @@ async def root():
 #     import asgi
 #     return await asgi.fetch(app, request, env)
 
-@app.get("/v1/api_config")
+@app.get("/v1/api_config", dependencies=[Depends(rate_limit_dependency)])
 async def api_config(api_index: int = Depends(verify_api_key)):
     return JSONResponse(content={"api_config": app.state.config})
 
-@app.post("/v1/api_config/update")
+@app.post("/v1/api_config/update", dependencies=[Depends(rate_limit_dependency)])
 async def api_config_update(api_index: int = Depends(verify_api_key), config: dict = Body(...)):
     if "providers" in config:
         app.state.config["providers"] = config["providers"]

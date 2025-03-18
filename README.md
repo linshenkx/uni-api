@@ -190,6 +190,7 @@ preferences: # Global configuration
     o1-mini: 30 # Model o1-mini timeout is 30 seconds, when requesting models starting with o1-mini, the timeout is 30 seconds
     o1-preview: 100 # Model o1-preview timeout is 100 seconds, when requesting models starting with o1-preview, the timeout is 100 seconds
   cooldown_period: 300 # Channel cooldown time, in seconds, default 300 seconds, optional. When a model request fails, the channel will be automatically excluded and cooled down for a period of time, and will not request the channel again. After the cooldown time ends, the model will be automatically restored until the request fails again, and it will be cooled down again. When cooldown_period is set to 0, the cooling mechanism is not enabled.
+  rate_limit: 999999/min # uni-api global rate limit, in times/minute, supports multiple frequency constraints, such as: 15/min,10/day. Default 999999/min, optional.
   error_triggers: # Error triggers, when the message returned by the model contains any of the strings in the error_triggers, the channel will return an error. Optional
     - The bot's usage is covered by the developer
     - process this request due to overload or policy
@@ -387,6 +388,7 @@ pex -r requirements.txt \
 We thank the following sponsors for their support:
 <!-- ¥2050 -->
 - @PowerHunter: ¥2000
+- @IM4O4: ¥100
 - @ioi：¥50
 
 ## How to sponsor us
@@ -476,6 +478,27 @@ api_key_rate_limit:
 At this time, if there is a request using the model gemini-1.5-pro-002.
 
 First, the uni-api will attempt to precisely match the model in the api_key_rate_limit. If the rate limit for gemini-1.5-pro-002 is set, then the rate limit for gemini-1.5-pro-002 is 500/min. If the requested model at this time is not gemini-1.5-pro-002, but gemini-1.5-pro-latest, since the api_key_rate_limit does not have a rate limit set for gemini-1.5-pro-latest, it will look for any model with the same prefix as gemini-1.5-pro-latest that has been set, thus the rate limit for gemini-1.5-pro-latest will be set to 1000/min.
+
+- I want to set channel 1 and channel 2 to random round-robin, and uni-api will request channel 3 after channel 1 and channel 2 failure. How do I set it?
+
+uni-api supports api key as a channel, and can use this feature to manage channels by grouping them.
+
+```yaml
+api_keys:
+  - api: sk-xxx1
+    model:
+      - sk-xxx2/* # channel 1 2 use random round-robin, request channel 3 after failure
+      - aws/* # channel 3
+    preferences:
+      SCHEDULING_ALGORITHM: fixed_priority # always request api key: sk-xxx2 first, then request channel 3 after failure
+
+  - api: sk-xxx2
+    model:
+      - anthropic/claude-3-7-sonnet # channel 1
+      - openrouter/claude-3-7-sonnet # channel 2
+    preferences:
+      SCHEDULING_ALGORITHM: random # channel 1 2 use random round-robin
+```
 
 ## ⭐ Star History
 
