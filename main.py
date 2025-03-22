@@ -20,8 +20,8 @@ from core.request import get_payload
 from core.response import fetch_response, fetch_response_stream
 from utils import (
     safe_get,
-    get_proxy,
     load_config,
+    update_config,
     get_model_dict,
     post_all_models,
     InMemoryRateLimiter,
@@ -29,6 +29,7 @@ from utils import (
 )
 
 from core.utils import (
+    get_proxy,
     get_engine,
     parse_rate_limit,
     circular_list_encoder,
@@ -472,7 +473,6 @@ class StatsMiddleware(BaseHTTPMiddleware):
                 # 如果 token 不在 api_list 中，检查是否以 api_list 中的任何一个开头
                 api_index = next((i for i, api in enumerate(api_list) if token.startswith(api)), None)
                 # token不在api_list中，使用默认值（不开启）
-                pass
 
             if api_index is not None:
                 enable_moderation = safe_get(config, 'api_keys', api_index, "preferences", "ENABLE_MODERATION", default=False)
@@ -1488,6 +1488,7 @@ async def api_config(api_index: int = Depends(verify_api_key)):
 async def api_config_update(api_index: int = Depends(verify_api_key), config: dict = Body(...)):
     if "providers" in config:
         app.state.config["providers"] = config["providers"]
+        app.state.config, app.state.api_keys_db, app.state.api_list = update_config(app.state.config, use_config_url=False)
     return JSONResponse(content={"message": "API config updated"})
 
 from fastapi.staticfiles import StaticFiles
